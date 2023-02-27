@@ -1,0 +1,289 @@
+---
+title: "Lars and Leaps"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+library(leaps)
+library(lars)
+
+# load up data
+data(Auto)
+
+# 2 converts predicted value numeric
+Auto$mpg <- as.numeric(Auto$mpg) 
+
+set.seed(123)
+# 3 separating by origin & convert matrix
+auto <-  Auto[,1:7]
+auto.us <- Auto[Auto$origin == 1,1:7]
+auto.ger <- Auto[Auto$origin == 2,1:7]
+auto.jap <- Auto[Auto$origin == 3,1:7]
+```
+
+# Function
+
+```{r}
+matrix.2ndorder.make<-function(x, only.quad=F){
+  x0<-x
+  dimn<-dimnames(x)[[2]] #extract the names of the variables
+  num.col<-length(x[1,]) # how many columns
+  for(i in 1:num.col){
+    # if we are doing all 2nd order
+    if(!only.quad){
+      for(j in i:num.col){
+        x0<-cbind(x0,as.numeric(x[,i])*as.numeric(x[,j]))
+        dimn<-c(dimn,paste(dimn[i],dimn[j],sep=""))
+        #create interaction dimnames
+      }
+    }
+    else{
+      #in here only if doing only squared terms
+      x0<-cbind(x0,as.numeric(x[,i])*as.numeric(x[,i]))
+      dimn<-c(dimn,paste(dimn[i],"2",sep="")) # squared dimmension names
+    }
+  }
+  dimnames(x0)[[2]]<-dimn
+  x0
+}
+
+leap.mine <- function(leap.train.x, leap.train.y, leap.test.x, leap.test.y){
+  
+  # creating leap model
+  leap.results <- leaps(x= leap.train.x, y = leap.train.y, method="Cp", nbest=1, int=F)
+  
+  # plot of Cp vs size
+  plot(leap.results$size, log(leap.results$Cp)) +title("Cp Vs size")
+  
+  # choose best subset
+  best_model_index <- which.min(leap.results$Cp) # index of lowest Cp value
+  best_model_predictors <- leap.results$which[best_model_index, ] # set of predictors chosen
+  
+  # columns selected
+  col_names.leaps <- data.frame(leap.train.x) |> colnames() |> as.list()
+  col_names.leaps <- col_names.leaps[best_model_predictors]
+  
+  # concatenating the formula into a string
+  result.leaps = "mpg~"
+  for (j in 2:length(col_names.leaps)){
+    result.leaps <- paste(result.leaps, col_names.leaps[j], sep="+")
+  }
+  
+  full.data.leap <-  data.frame( cbind(leap.train.y, leap.train.x) ) 
+  names(full.data.leap)[1] <- "mpg"
+  
+  lmod.leaps.best <- lm(result.leaps,data = data.frame(full.data.leap))
+  
+  # 7 Press value
+  # Get the predicted values for the test data
+  predict.leaps <- predict(lmod.leaps.best, newdata = data.frame(leap.test.x))
+  
+  # 8 Calculate the PRESS statistic for the current model
+  PRESS <- sum((leap.test.y - predict.leaps)^2)
+  
+  # correlation
+  plot(leap.test.y, predict.leaps) + title("Fitted vs Actual")
+  cor.leaps <- cor(leap.test.y, predict.leaps) 
+  
+  print("Leaps model")
+  print("- - - - - - - -")
+  cat("Size: ", leap.results$size[best_model_index],'\n')
+  cat("Cp: ", min(leap.results$Cp),'\n')
+  cat("Press:", PRESS,'\n')
+  cat("Correlation of fitted vs actual:", cor.leaps,'\n')
+  print("")
+  cat("Model parameters:\n")
+  for ( i in 1:length(col_names.leaps )){
+    print(col_names.leaps[i])
+  }
+  cat("Number of parameters", length(col_names.leaps),'\n')
+  print(length(col_names.leaps))
+  
+  
+}
+
+lar.mine <- function(lar.train.x, lar.train.y, lar.test.x, lar.test.y){
+
+  # create model lars model
+  lmod.lars <- lars(lar.train.x, lar.train.y, type="lar", trace=F)
+  
+  # all subsets plots
+  plot(lmod.lars)
+  
+  # finding lowst Cp value
+  low.cp <- min(lmod.lars$Cp)
+  
+  # index of lowest Cp
+  index.lar <- which(lmod.lars$Cp == low.cp)
+  
+  # arrays used to store cols that are used
+  cols.lars <- c()
+  col_names.lar <- data.frame(lar.train.x) |> colnames() |> as.list()
+  
+  # loop to append columns that are selected
+  # checks if beta is equal to zero
+  for( i in 1:length(col_names.lar)){
+    if (lmod.lars$beta[index.lar,i] != 0.0){
+      cols.lars <- append(cols.lars, col_names.lar[i], after = length(cols.lars))
+    }
+  }
+  
+  # fomring formula for the model as a string
+  result.lars <- "mpg~"
+  # concanting into string
+  for( i in 1:length(cols.lars)){
+    result.lars <- paste(result.lars, cols.lars[i], sep="+")
+  }
+  
+  full.data.lar <-  data.frame( cbind(lar.train.y, lar.train.x) ) 
+  names(full.data.lar)[1] <- "mpg"
+  
+  # best lars model
+  lmod.lars.best <- lm(result.lars, data=full.data.lar)
+  
+  # plot to show MSE for all sub models
+  lmod.cv.lars <- cv.lars(lar.train.x, lar.train.y, K = 5, se=F, type="lasso",
+                          trace=F)
+  
+  # find steps for the lowest MSE
+  lowest.steps.index <- which( lmod.cv.lars$cv == min(lmod.cv.lars$cv))
+  
+  lowest.steps <- lmod.cv.lars$index[lowest.steps.index]
+  
+  # predict best lars
+  predict.lars <- predict(lmod.lars.best, newdata=data.frame(lar.test.x))
+  
+  plot(lar.test.y, predict.lars)
+  cor.lars <- cor(lar.test.y, predict.lars)
+  
+  print("Lar model")
+  print("- - - - - -  -")
+  cat("Best k models using Cp:", low.cp, '\n')
+  cat("Best k using cross validated MSE:", min(lmod.cv.lars$cv), '\n')
+  cat("corresponding number of steps:", lowest.steps,'\n')
+  cat("Correlation of fitted vs actual:", cor.lars,'\n')
+  print("")
+  cat("Model parameters:\n")
+  for ( i in 1:length(col_names.lar )){
+    print(col_names.lar[i])
+  }
+  cat("Number of parameters", length(col_names.lar),'\n')
+}
+
+# combined function
+leap.or.lars <- function(data, country, leaping = T){
+  
+  # splitting data
+  sample <- sample(c(TRUE, FALSE), nrow(data), replace=TRUE, prob=c(0.8,0.2))
+  train  <- data[sample, ]
+  test   <- data[!sample, ]
+  
+  # convert frames into matrix
+  train.x <- data.matrix(train[,-1])
+  train.y <- data.matrix(train[,1])
+  test.x <- data.matrix(test[,-1])
+  test.y <- data.matrix(test[,1])
+  
+  # 2nd order
+  train.x <- matrix.2ndorder.make(train.x)
+  test.x <- matrix.2ndorder.make(test.x)
+  
+  print("")
+  # runs leaps
+  if(leaping){
+    leap.mine(train.x, train.y, test.x, test.y)
+    
+  } else {
+    lar.mine(train.x, train.y, test.x, test.y)
+    
+  }
+  
+}
+```
+
+
+# Complete data leaps and lars
+
+```{r}
+leap.or.lars(auto, "All data", leaping=T)
+
+```
+
+```{r}
+leap.or.lars(auto, "All data", leaping=F)
+
+```
+
+leap model has 9 paramters
+correlation with actual value = 0.9
+
+lar model has 27 parameters
+correlation with acutal value = 0.95
+
+lar model has better prediciton accuracy than leap
+
+# USA leaps and lars
+
+```{r}
+leap.or.lars(auto.us, "All data", leaping=T)
+```
+
+```{r}
+leap.or.lars(auto.us, "All data", leaping=F)
+```
+
+leap model has 10 paramters
+correlation with actual value = 0.91
+
+lar model has 27 parameters
+correlation with acutal value = 0.92
+
+lar model has better prediciton accuracy than leap
+
+# Germany leaps and lars
+
+```{r}
+leap.or.lars(auto.ger, "All data", leaping=T)
+```
+
+```{r}
+leap.or.lars(auto.ger, "All data", leaping=F)
+```
+
+leap model has 6  paramters
+correlation with actual value = 0.85
+
+lar model has 27 parameters
+correlation with acutal value = 0.87
+
+lar model has better prediciton accuracy than leap
+
+# Japan leaps and lars
+
+```{r}
+leap.or.lars(auto.jap, "All data", leaping=T)
+```
+
+```{r}
+leap.or.lars(auto.jap, "All data", leaping=F)
+```
+
+leap model has 8  parameters
+correlation with actual value = 0.76
+
+lar model has 27 parameters
+correlation with actual value = 0.86
+
+lar model has better prediction accuracy than leap
+
+# Overall Conclusion
+
+In all data sets lar model has better correlation than leap model
+
+Correlation wasn't consistent for all the model
+
+lar selected predictors had the same number of predictors
+
+leaps wasn't consistent with the number of predicotrs for each model. Ranging from 6 to 10
